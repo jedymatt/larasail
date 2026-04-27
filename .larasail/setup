@@ -170,8 +170,9 @@ bar
 cyan "| Installing npm"
 bar
 
-curl -sL https://deb.nodesource.com/setup_20.x | sudo bash -
+curl -sL https://deb.nodesource.com/setup_24.x | sudo bash -
 sudo apt-get install -y nodejs
+sudo corepack enable
 
 bar
 cyan "| Adding the Laravel Installer "
