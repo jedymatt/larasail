@@ -1,0 +1,144 @@
+#!/bin/bash
+
+#/
+#--------------------------------------------------------------------------
+# Larasail MySQL Manager
+#--------------------------------------------------------------------------
+#
+# Manage the MySQL/MariaDB server installation.
+#
+# Usage:
+#   larasail mysql fresh [mariadb] [--force]
+#
+# `fresh` purges any existing MySQL/MariaDB installation, removes its data
+# directories and Larasail's stored credentials, then performs a clean
+# install with a freshly generated password. THIS DELETES ALL DATABASES.
+#
+#/
+
+. /etc/.larasail/includes/colors
+. /etc/.larasail/includes/format
+
+shift
+
+ACTION=$1
+shift
+
+case $ACTION in
+    fresh)
+        USE_MARIADB=0
+        FORCE=0
+        MYSQL_PACKAGE='mysql-server'
+        MYSQL_SERVICE='MySQL'
+
+        while [ $# -gt 0 ]; do
+            case $1 in
+                mariadb)
+                    USE_MARIADB=1
+                    MYSQL_PACKAGE='mariadb-server'
+                    MYSQL_SERVICE='MariaDB'
+                    ;;
+                --force|-f)
+                    FORCE=1
+                    ;;
+            esac
+            shift
+        done
+
+        if [ $FORCE -eq 0 ]; then
+            printf "${Red}WARNING:${Color_Off} this will purge MySQL/MariaDB and "
+            printf "${Red}DELETE ALL DATABASES.${Color_Off}\n"
+            printf "Continue? [y/N] "
+            read ANSWER
+            case $ANSWER in
+                Y|y|yes|YES) ;;
+                *)
+                    echo "Aborted."
+                    exit 1
+                    ;;
+            esac
+        fi
+
+        bar
+        cyan "| Stopping MySQL/MariaDB services"
+        bar
+        sudo systemctl stop mysql 2>/dev/null || true
+        sudo systemctl stop mariadb 2>/dev/null || true
+        sudo service mysql stop 2>/dev/null || true
+
+        bar
+        cyan "| Purging existing MySQL/MariaDB packages"
+        bar
+        INSTALLED=$(dpkg-query -W -f='${Package}\n' \
+            'mysql-server*' 'mysql-client*' 'mysql-common' \
+            'mariadb-server*' 'mariadb-client*' 'mariadb-common' \
+            2>/dev/null | tr '\n' ' ')
+        if [ -n "$INSTALLED" ]; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y $INSTALLED
+            sudo apt-get autoremove -y
+        else
+            echo "No existing MySQL/MariaDB packages found."
+        fi
+
+        bar
+        cyan "| Removing data directories and Larasail credentials"
+        bar
+        sudo rm -rf /var/lib/mysql /var/log/mysql /etc/mysql \
+            /var/lib/mysql-files /var/lib/mysql-keyring
+        sudo rm -f /home/larasail/.my.cnf
+        sudo rm -f /etc/.larasail/tmp/mysql.cnf
+        sudo rm -f /etc/.larasail/tmp/*.dbpass
+
+        bar
+        cyan "| Installing $MYSQL_SERVICE"
+        bar
+
+        MYSQLPASS=$(openssl rand -base64 32)
+        MYSQLUSER='dbadmin'
+
+        if [ ! -d /etc/.larasail/tmp ]; then
+            sudo mkdir -p /etc/.larasail/tmp
+        fi
+
+        echo '[client]' > /home/larasail/.my.cnf
+        echo "user=${MYSQLUSER}" >> /home/larasail/.my.cnf
+        echo "password='${MYSQLPASS}'" >> /home/larasail/.my.cnf
+        chmod 600 /home/larasail/.my.cnf
+
+        export DEBIAN_FRONTEND=noninteractive
+        echo "mysql-server-5.7 mysql-server/root_password password $MYSQLPASS" | sudo debconf-set-selections
+        echo "mysql-server-5.7 mysql-server/root_password_again password $MYSQLPASS" | sudo debconf-set-selections
+        echo "mysql-server mysql-server/root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+        echo "mysql-server mysql-server/re-root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+        echo "mysql-server-8.0 mysql-server/root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+        echo "mysql-server-8.0 mysql-server/re-root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+
+        if [ $USE_MARIADB -eq 1 ]; then
+            echo "mariadb-server-10.3 mysql-server/root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+            echo "mariadb-server-10.3 mysql-server/re-root-pass password ${MYSQLPASS}" | sudo debconf-set-selections
+        fi
+
+        sudo apt-get update
+        sudo apt-get install -y ${MYSQL_PACKAGE}
+
+        sudo service mysql start 2>/dev/null || sudo service mariadb start 2>/dev/null
+        sudo mysql -uroot -p${MYSQLPASS} -e "CREATE USER ${MYSQLUSER}@localhost IDENTIFIED BY '${MYSQLPASS}'; GRANT ALL PRIVILEGES ON *.* TO ${MYSQLUSER}@localhost WITH GRANT OPTION;"
+
+        setsail
+        bar
+        cyan "| Fresh $MYSQL_SERVICE install complete"
+        cyan "| Run 'larasail mysqlpass' to view the new password"
+        bar
+        ;;
+    *)
+        echo "${Yellow}Usage:${Color_Off}"
+        echo "  larasail mysql <command>"
+        echo ""
+        echo "${Yellow}Commands:${Color_Off}"
+        echo "  ${Yellow}fresh${Color_Off} [mariadb] [--force]"
+        echo "      Purge and reinstall MySQL/MariaDB. ${Red}DESTROYS ALL DATABASES.${Color_Off}"
+        echo "      Pass 'mariadb' to install MariaDB instead of MySQL."
+        echo "      Pass --force to skip the confirmation prompt."
+        exit
+        ;;
+esac
