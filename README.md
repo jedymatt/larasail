@@ -152,6 +152,18 @@ larasail project cron   # scheduler cron only
 larasail project queue  # supervisor queue worker only
 ```
 
+## Reinstalling MySQL from scratch
+
+If your MySQL/MariaDB install gets into a bad state, you can wipe it and start over:
+
+```
+larasail mysql fresh             # MySQL
+larasail mysql fresh mariadb     # MariaDB
+larasail mysql fresh --force     # skip the confirmation prompt
+```
+
+This purges the packages, removes `/var/lib/mysql`, clears Larasail's cached credentials, and reinstalls with a freshly generated root password. **All existing databases and users are deleted.** Use `larasail mysqlpass` afterwards to read the new password.
+
 ## Passwords
 
 When installing and setting up LaraSail there are two passwords that are randomly generated:
