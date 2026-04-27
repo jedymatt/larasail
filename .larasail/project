@@ -1,0 +1,130 @@
+#!/bin/bash
+
+#/
+#--------------------------------------------------------------------------
+# Larasail Project Setup
+#--------------------------------------------------------------------------
+#
+# Wires up the Laravel scheduler cron job and a Supervisor queue worker
+# for an existing Laravel project.
+#
+# Usage:
+#   larasail project setup [path]   # cron + supervisor queue worker
+#   larasail project cron  [path]   # cron only
+#   larasail project queue [path]   # supervisor queue worker only
+#
+# If no path is given, the current working directory is used.
+#
+#/
+
+. /etc/.larasail/includes/colors
+. /etc/.larasail/includes/format
+
+shift
+
+ACTION=$1
+shift
+
+PROJECT_PATH=$1
+if [ -z "$PROJECT_PATH" ]; then
+    PROJECT_PATH=$(pwd)
+fi
+
+if [ -d "$PROJECT_PATH" ]; then
+    PROJECT_PATH=$(cd "$PROJECT_PATH" && pwd)
+fi
+
+if [ ! -f "$PROJECT_PATH/artisan" ]; then
+    red "ERROR: $PROJECT_PATH does not look like a Laravel project (missing artisan)."
+    exit 1
+fi
+
+PROJECT_SLUG=$(basename "$PROJECT_PATH" | tr -c 'a-zA-Z0-9' '_' | sed 's/_*$//')
+
+setup_cron() {
+    bar
+    cyan "| Adding Laravel scheduler cron job for $PROJECT_PATH"
+    bar
+
+    CRON_FILE="/etc/cron.d/larasail-${PROJECT_SLUG}"
+    sudo tee "$CRON_FILE" > /dev/null <<EOF
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Laravel scheduler for ${PROJECT_PATH}
+* * * * * larasail cd ${PROJECT_PATH} && php artisan schedule:run >> /dev/null 2>&1
+EOF
+    sudo chmod 644 "$CRON_FILE"
+    echo "Cron entry written to $CRON_FILE"
+}
+
+setup_queue() {
+    bar
+    cyan "| Setting up Supervisor queue worker for $PROJECT_PATH"
+    bar
+
+    if ! command -v supervisorctl >/dev/null 2>&1; then
+        echo "Installing supervisor..."
+        sudo apt-get update
+        sudo apt-get install -y supervisor
+        sudo systemctl enable supervisor
+        sudo systemctl start supervisor
+    fi
+
+    LOG_DIR="${PROJECT_PATH}/storage/logs"
+    if [ ! -d "$LOG_DIR" ]; then
+        sudo mkdir -p "$LOG_DIR"
+        sudo chown -R larasail:www-data "$LOG_DIR"
+        sudo chmod -R 775 "$LOG_DIR"
+    fi
+
+    CONF_FILE="/etc/supervisor/conf.d/larasail-${PROJECT_SLUG}.conf"
+    sudo tee "$CONF_FILE" > /dev/null <<EOF
+[program:larasail-${PROJECT_SLUG}]
+process_name=%(program_name)s_%(process_num)02d
+command=php ${PROJECT_PATH}/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=larasail
+numprocs=2
+redirect_stderr=true
+stdout_logfile=${LOG_DIR}/queue-worker.log
+stopwaitsecs=3600
+EOF
+    sudo chmod 644 "$CONF_FILE"
+
+    sudo supervisorctl reread
+    sudo supervisorctl update
+    sudo supervisorctl start "larasail-${PROJECT_SLUG}:*" 2>/dev/null || true
+
+    echo "Supervisor config written to $CONF_FILE"
+}
+
+case $ACTION in
+    setup)
+        setup_cron
+        setup_queue
+
+        bar
+        cyan "| Project setup complete for $PROJECT_PATH"
+        bar
+        ;;
+    cron)
+        setup_cron
+        ;;
+    queue)
+        setup_queue
+        ;;
+    *)
+        echo "${Yellow}Usage:${Color_Off}"
+        echo "  larasail project <command> [path]"
+        echo ""
+        echo "${Yellow}Commands:${Color_Off}"
+        echo "  ${Yellow}setup${Color_Off}    Configure cron + supervisor queue worker"
+        echo "  ${Yellow}cron${Color_Off}     Configure only the Laravel scheduler cron job"
+        echo "  ${Yellow}queue${Color_Off}    Configure only the supervisor queue worker"
+        echo ""
+        echo "If no path is given, the current directory is used."
+        exit
+        ;;
+esac

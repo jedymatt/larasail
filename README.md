@@ -32,17 +32,14 @@ larasail -h
 larasail setup
 ```
 
-The default configuration will install `Nginx`, `PHP 8.2`, and `MySQL 8`. If you wish to use PHP `7.1`, `7.2`, `7.3`, `7.4`, `8.0`, `8.1`, `8.3` or `8.4` you can include the argument `php71`/`php72`/`php73`/`php74`/`php80`/`php81`/`php83`/`php84` like so:
+The default configuration will install `Nginx`, `PHP 8.4`, and `MySQL 8`. If you wish to use PHP `8.0`, `8.1`, `8.3` or `8.5` you can include the argument `php80`/`php81`/`php83`/`php85` like so:
 
 ```
-larasail setup php71 # Install with PHP 7.1
-larasail setup php72 # Install with PHP 7.2
-larasail setup php73 # Install with PHP 7.3
-larasail setup php74 # Install with PHP 7.4
 larasail setup php80 # Install with PHP 8.0
 larasail setup php81 # Install with PHP 8.1
 larasail setup php83 # Install with PHP 8.3
 larasail setup php84 # Install with PHP 8.4
+larasail setup php85 # Install with PHP 8.5
 ```
 
 ### Database
@@ -50,7 +47,7 @@ larasail setup php84 # Install with PHP 8.4
 By default, LaraSail will set up the latest version of MySQL. To opt for MariaDB instead, kindly pass `mariadb` to `larasail setup` as the second or third parameter like so:
 
 ```
-larasail setup mariadb # will install default PHP version (7.4) and MariaDB
+larasail setup mariadb # will install default PHP version (8.4) and MariaDB
 larasail setup php80 mariadb # will install the selected PHP version (8.0 in this case) and MariaDB
 larasail setup mariadb php80 # same as above
 
@@ -60,13 +57,26 @@ larasail setup mariadb php80 # same as above
 By default, LaraSail does not install a Redis server. To opt to install `redis`, pass `redis` option to `larasail setup` as the second or third parameter like so:
 
 ```shell
-larasail setup php82 redis
+larasail setup php84 redis
 ```
 
 or
 
 ```shell
 larasail setup redis
+```
+
+### PostgreSQL
+By default, LaraSail does not install a PostgreSQL server. To opt to install `postgres`, pass `postgres` option to `larasail setup` as the second or third parameter like so:
+
+```shell
+larasail setup php84 postgres
+```
+
+or
+
+```shell
+larasail setup postgres
 ```
 
 ## Creating a new site
@@ -121,6 +131,26 @@ larasail host mywebsite.com /var/www/mywebsite --www-alias
 3. Optional flag if you would like to include your project's `www` alias: `www.mywebsite.com` *(--www-alias)*
 
 Finally, point your domain to the IP address of your new server. And wallah, you're ready to rock 🤘 with your new Laravel website. If you used the `--www-alias` flag, don't forget to add your domain's www `CNAME` record
+
+## Project setup (cron & queue worker)
+
+After creating your project you can wire up the Laravel scheduler cron entry and a Supervisor-managed queue worker with a single command:
+
+```
+larasail project setup [path]
+```
+
+If no path is given, the current directory is used. The command will:
+
+- Create `/etc/cron.d/larasail-<project>` running `php artisan schedule:run` every minute
+- Install `supervisor` if not already present, then write `/etc/supervisor/conf.d/larasail-<project>.conf` running `php artisan queue:work` and start the workers
+
+You can also run them individually:
+
+```
+larasail project cron   # scheduler cron only
+larasail project queue  # supervisor queue worker only
+```
 
 ## Passwords
 

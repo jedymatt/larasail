@@ -12,12 +12,15 @@
 . /etc/.larasail/includes/colors
 . /etc/.larasail/includes/format
 
-PHP="8.2"
+PHP="8.4"
 MYSQL_SERVICE="MySQL"
 MYSQL_PACKAGE="mysql-server"
 INSTALL_REDIS=0
+INSTALL_POSTGRES=0
 
-if [ "$2" = "php84" ] || [ "$3" = "php84" ]; then
+if [ "$2" = "php85" ] || [ "$3" = "php85" ]; then
+   PHP="8.5"
+elif [ "$2" = "php84" ] || [ "$3" = "php84" ]; then
    PHP="8.4"
 elif [ "$2" = "php83" ] || [ "$3" = "php83" ]; then
    PHP="8.3"
@@ -25,14 +28,6 @@ elif [ "$2" = "php81" ] || [ "$3" = "php81" ]; then
    PHP="8.1"
 elif [ "$2" = "php80" ] || [ "$3" = "php80" ]; then
    PHP="8.0"
-elif [ "$2" = "php74" ] || [ "$3" = "php74" ]; then
-   PHP="7.4"
-elif [ "$2" = "php73" ] || [ "$3" = "php73" ]; then
-   PHP="7.3"
-elif [ "$2" = "php72" ] || [ "$3" = "php72" ]; then
-   PHP="7.2"
-elif [ "$2" = "php71" ] || [ "$3" = "php71" ]; then
-   PHP="7.1"
 fi
 
 if [ "$2" = "mariadb" ] || [ "$3" = "mariadb" ]; then
@@ -42,6 +37,10 @@ fi
 
 if [ "$2" = "redis" ] || [ "$3" = "redis" ]; then
    INSTALL_REDIS=1
+fi
+
+if [ "$2" = "postgres" ] || [ "$3" = "postgres" ]; then
+   INSTALL_POSTGRES=1
 fi
 
 setsail
@@ -77,39 +76,56 @@ bar
 cyan "| Installing $MYSQL_SERVICE ";
 bar
 
-MYSQLPASS=$(openssl rand -base64 32)
-MYSQLUSER='dbadmin'
-
 sudo apt-get update
 if [ ! -d /etc/.larasail/tmp ]; then
   mkdir /etc/.larasail/tmp
 fi
 
+# Reuse existing credentials on re-runs so /home/larasail/.my.cnf stays in
+# sync with the password that is actually configured in MySQL. Without this,
+# a second `larasail setup` would overwrite .my.cnf with a freshly generated
+# password while the real MySQL root password remained unchanged, breaking
+# `larasail mysqlpass` and any subsequent connections.
+if [ -f /home/larasail/.my.cnf ]; then
+   cyan "| Reusing existing MySQL credentials from /home/larasail/.my.cnf"
+   MYSQLPASS=$(grep '^password=' /home/larasail/.my.cnf | sed -e "s/^password='//" -e "s/'$//")
+   MYSQLUSER=$(grep '^user=' /home/larasail/.my.cnf | awk -F'user=' '{print $2}')
+   MYSQL_ALREADY_CONFIGURED=1
+else
+   MYSQLPASS=$(openssl rand -base64 32)
+   MYSQLUSER='dbadmin'
+   MYSQL_ALREADY_CONFIGURED=0
+fi
 
-echo '[client]' > /home/larasail/.my.cnf
-echo "user=${MYSQLUSER}" >> /home/larasail/.my.cnf
-echo "password='${MYSQLPASS}'" >> /home/larasail/.my.cnf
+if [ $MYSQL_ALREADY_CONFIGURED -eq 0 ]; then
+   echo '[client]' > /home/larasail/.my.cnf
+   echo "user=${MYSQLUSER}" >> /home/larasail/.my.cnf
+   echo "password='${MYSQLPASS}'" >> /home/larasail/.my.cnf
 
-chmod 600 /home/larasail/.my.cnf
+   chmod 600 /home/larasail/.my.cnf
 
-export DEBIAN_FRONTEND=noninteractive
-echo "mysql-server-5.7 mysql-server/root_password password $MYSQLPASS" | sudo debconf-set-selections
-echo "mysql-server-5.7 mysql-server/root_password_again password $MYSQLPASS" | sudo debconf-set-selections
-echo "mysql-server mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
-echo "mysql-server mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
-echo "mysql-server-8.0 mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
-echo "mysql-server-8.0 mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   export DEBIAN_FRONTEND=noninteractive
+   echo "mysql-server-5.7 mysql-server/root_password password $MYSQLPASS" | sudo debconf-set-selections
+   echo "mysql-server-5.7 mysql-server/root_password_again password $MYSQLPASS" | sudo debconf-set-selections
+   echo "mysql-server mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   echo "mysql-server mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   echo "mysql-server-8.0 mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   echo "mysql-server-8.0 mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
 
 
-if [ "$2" = "mariadb" ] || [ "$3" = "mariadb" ]; then
-   echo "mariadb-server-10.3 mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
-   echo "mariadb-server-10.3 mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   if [ "$2" = "mariadb" ] || [ "$3" = "mariadb" ]; then
+      echo "mariadb-server-10.3 mysql-server/root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+      echo "mariadb-server-10.3 mysql-server/re-root-pass password ${MYSQLPASS}"|sudo debconf-set-selections
+   fi
 fi
 
 sudo apt-get install -y ${MYSQL_PACKAGE}
 
 sudo service mysql start
-sudo mysql -uroot -p${MYSQLPASS} -e "CREATE USER ${MYSQLUSER}@localhost IDENTIFIED BY '${MYSQLPASS}'; GRANT ALL PRIVILEGES ON *.* TO ${MYSQLUSER}@localhost WITH GRANT OPTION;"
+
+if [ $MYSQL_ALREADY_CONFIGURED -eq 0 ]; then
+   sudo mysql -uroot -p${MYSQLPASS} -e "CREATE USER ${MYSQLUSER}@localhost IDENTIFIED BY '${MYSQLPASS}'; GRANT ALL PRIVILEGES ON *.* TO ${MYSQLUSER}@localhost WITH GRANT OPTION;"
+fi
 
 # Get current client IP address
 CLIENT_IP=$(echo $SSH_CLIENT | awk '{ print $1}')
@@ -188,6 +204,25 @@ if [ $INSTALL_REDIS -eq 1 ] ; then
 	bar
 
 	sudo apt -y install redis-server
+fi
+
+if [ $INSTALL_POSTGRES -eq 1 ] ; then
+	bar
+	cyan "| Installing PostgreSQL"
+	bar
+
+	sudo apt-get install -y postgresql postgresql-contrib
+	sudo systemctl enable postgresql
+	sudo systemctl start postgresql
+
+	POSTGRES_USER='dbadmin'
+	POSTGRES_PASS=$(openssl rand -base64 32 | tr -d '/+=')
+
+	sudo -u postgres psql -c "CREATE USER ${POSTGRES_USER} WITH SUPERUSER PASSWORD '${POSTGRES_PASS}';"
+
+	echo "${POSTGRES_PASS}" | sudo tee /etc/.larasail/tmp/postgrespass > /dev/null
+	sudo chown larasail:larasail /etc/.larasail/tmp/postgrespass
+	sudo chmod 600 /etc/.larasail/tmp/postgrespass
 fi
 
 setsail
